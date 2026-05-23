@@ -1,3 +1,5 @@
+<!-- build-loop@tyroneross:canary:agent-rally-watcher -->
+<!-- canary-end -->
 # Agent Rally Watcher
 
 > **Daemon companion to [agent-rally-point](https://github.com/tyroneross/agent-rally-point): push-based watcher for Rally Point streams, with per-consumer filtering and dispatch.**
@@ -114,6 +116,37 @@ passed — the flag only affects the FIRST start when no cursor exists yet.
 
 ## Architecture
 
+> **Full architecture spec: [`ARCHITECTURE.md`](ARCHITECTURE.md)** (three-layer model, data flow, sink types, lifecycle, design invariants).
+
+### How it fits
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Layer 3 — CONSUMERS (build-loop, codex, claude_code, custom tools) │
+│    post() events · checkpoint_read() deltas · inbox/<tool>.jsonl    │
+└────────────────────────────▲─────────────────────▲──────────────────┘
+                             │                     │
+              read filtered  │     write events    │
+                             │                     │
+┌────────────────────────────┴──────────┐          │
+│  Layer 2 — DAEMON (THIS REPO)         │          │
+│    kqueue/inotify tail of channel ·   │          │
+│    consumers.toml filter rules ·      │          │
+│    per-consumer cursor · sinks        │          │
+└────────────────────────────▲──────────┘          │
+                             │ tails                │ publishes
+                             │                     │
+┌────────────────────────────┴─────────────────────┴──────────────────┐
+│  Layer 1 — SUBSTRATE (agent-rally-point)                            │
+│    channel layout · changes.jsonl append-only · revision counter ·  │
+│    presence/heartbeat · checkpoint_read · post · lifecycle reapers  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+The watcher is **Layer 2**: a long-running daemon that pushes filtered events to per-consumer sinks so that low-latency tools don't have to poll. Tools that don't need sub-second latency can skip the watcher entirely and call `checkpoint_read` from `agent-rally-point` directly on a timer — both paths read the same underlying log.
+
+### Data flow
+
 ```
 agent-rally-point          (substrate)
    writes ──► ~/.agent-rally-point/apps/<slug>/changes.jsonl
@@ -131,6 +164,18 @@ agent-rally-watcher       (daemon)
  file sink   notify sink      http POST       (custom)
  (stream)    (osascript)      (v0.2 stub)
 ```
+
+### Adding a new consumer
+
+1. Append a `[consumers.<id>]` block to `~/.agent-rally-watcher/consumers.toml` with filter rules + sink config (see [consumers.toml example above](#consumerstoml)).
+2. `agent-rally-watcher reload` — re-reads the config without restarting the daemon. The new consumer's cursor initializes to `--from-now` (file-end); pass `--from-start` on the next `start` if you want to backfill from byte 0.
+3. Verify routing: `tail -F ~/.agent-rally-watcher/streams/<id>.jsonl` after the next channel event.
+
+### Cross-references
+
+- **Substrate (channel format, record schema, presence API)**: [`agent-rally-point/ARCHITECTURE.md`](https://github.com/tyroneross/agent-rally-point/blob/main/ARCHITECTURE.md), [`docs/SCHEMA.md`](https://github.com/tyroneross/agent-rally-point/blob/main/docs/SCHEMA.md).
+- **Discovery (manifest, CLI)**: [`agent-rally-point/docs/DISCOVERY.md`](https://github.com/tyroneross/agent-rally-point/blob/main/docs/DISCOVERY.md).
+- **Build-loop's consumption pattern**: [`build-loop/skills/build-loop/references/coordination.md`](https://github.com/tyroneross/build-loop/blob/main/skills/build-loop/references/coordination.md).
 
 ## How this differs from `tail -F | grep`
 
