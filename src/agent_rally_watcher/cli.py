@@ -5,6 +5,12 @@
 Channel resolution: by default, runs ``git rev-parse --git-common-dir``
 against ``cwd`` and resolves the canonical Rally Point channel under
 ``~/.agent-rally-point/apps/<slug>/``. ``--channel-dir PATH`` overrides.
+
+Channel-dir fallback (when not overridden):
+    1. ``~/.agent-rally-point/apps/<slug>/`` if it exists (canonical).
+    2. ``~/.build-loop/apps/<slug>/`` if it exists (legacy — rally-point shipped
+       inside build-loop before becoming standalone). Logs a one-shot warning.
+    3. ``~/.agent-rally-point/apps/<slug>/`` (creates the canonical layout).
 """
 from __future__ import annotations
 
@@ -26,6 +32,9 @@ from .daemon import (
 from .installers import launchd
 
 DEFAULT_RALLY_POINT_APPS_ROOT = "~/.agent-rally-point/apps"
+LEGACY_BUILD_LOOP_APPS_ROOT = "~/.build-loop/apps"
+
+_legacy_warning_emitted = False
 
 
 def _normalize_base(name: str) -> str:
@@ -64,8 +73,29 @@ def derive_channel_slug(cwd: Path) -> str:
 
 
 def _channel_dir_for(slug: str) -> Path:
-    raw = os.environ.get("BUILD_LOOP_APPS_ROOT") or DEFAULT_RALLY_POINT_APPS_ROOT
-    return Path(os.path.expanduser(raw)) / slug
+    """Resolve the channel dir for ``slug`` with canonical/legacy fallback.
+
+    1. ``$BUILD_LOOP_APPS_ROOT`` override or ``~/.agent-rally-point/apps/<slug>/`` if it exists.
+    2. ``~/.build-loop/apps/<slug>/`` if it exists (legacy compat — emits a one-shot warning).
+    3. ``~/.agent-rally-point/apps/<slug>/`` (default; will be created by the caller).
+    """
+    global _legacy_warning_emitted
+    override = os.environ.get("BUILD_LOOP_APPS_ROOT")
+    canonical = Path(os.path.expanduser(override or DEFAULT_RALLY_POINT_APPS_ROOT)) / slug
+    if canonical.exists():
+        return canonical
+    legacy = Path(os.path.expanduser(LEGACY_BUILD_LOOP_APPS_ROOT)) / slug
+    if legacy.exists():
+        if not _legacy_warning_emitted:
+            print(
+                f"agent-rally-watcher: using legacy channel dir {legacy} "
+                f"(canonical is ~/.agent-rally-point/apps/{slug}/). "
+                "Migrate by moving the directory; existing data formats match.",
+                file=sys.stderr,
+            )
+            _legacy_warning_emitted = True
+        return legacy
+    return canonical
 
 
 def _resolve_channel(args: argparse.Namespace) -> tuple[str, Path]:
