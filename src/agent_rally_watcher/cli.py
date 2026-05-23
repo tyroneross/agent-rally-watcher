@@ -118,7 +118,15 @@ def cmd_start(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         channel_dir.mkdir(parents=True, exist_ok=True)
-    return start_daemon(paths, channel_dir, foreground=args.foreground)
+    # --from-now / --from-start are a single boolean; argparse stores --from-start
+    # as `from_start=True`. Default (neither flag) → from_start=False → seek-to-end.
+    seek_to_end = not args.from_start
+    return start_daemon(
+        paths,
+        channel_dir,
+        foreground=args.foreground,
+        seek_to_end_on_first_start=seek_to_end,
+    )
 
 
 def cmd_stop(args: argparse.Namespace) -> int:
@@ -167,7 +175,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp_start = sub.add_parser("start", help="Start the watcher daemon")
     _add_channel_arg(sp_start)
     sp_start.add_argument("--foreground", action="store_true", help="Run in the current process (no fork)")
-    sp_start.set_defaults(func=cmd_start)
+    backfill = sp_start.add_mutually_exclusive_group()
+    backfill.add_argument(
+        "--from-now",
+        dest="from_start",
+        action="store_false",
+        help="Seek absent cursors to EOF on first start so only new events dispatch (default)",
+    )
+    backfill.add_argument(
+        "--from-start",
+        dest="from_start",
+        action="store_true",
+        help="Backfill from byte 0 on first start (v0.1.0 behavior)",
+    )
+    sp_start.set_defaults(func=cmd_start, from_start=False)
 
     sp_stop = sub.add_parser("stop", help="Stop the watcher daemon")
     _add_channel_arg(sp_stop)

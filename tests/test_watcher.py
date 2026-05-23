@@ -143,6 +143,125 @@ def test_partial_trailing_line_held_for_next_sweep(tmp_path: Path) -> None:
     assert cursor2.offset == changes.stat().st_size
 
 
+def test_from_now_skips_existing_records_on_first_start(tmp_path: Path) -> None:
+    """Default (seek_to_end_on_first_start=True) → existing records NOT dispatched."""
+    channel_dir = tmp_path / "channel"
+    cursor_root = tmp_path / "cursors"
+    changes = _seed_channel(channel_dir)  # 5 records already present
+    rule = FilterRule()  # match everything
+    consumer = _consumer(tmp_path, "fromnow", rule)
+    stop = threading.Event()
+    watcher = Watcher(
+        channel_dir=channel_dir,
+        consumers=[consumer],
+        stop_event=stop,
+        cursor_root=cursor_root,
+        seek_to_end_on_first_start=True,
+    )
+
+    def backend(_w: Watcher) -> Iterable[None]:
+        stop.set()
+        yield None
+
+    run_watcher(watcher, backend=backend)
+
+    # No output file should exist (no records dispatched)
+    out_path = tmp_path / "fromnow.out.jsonl"
+    assert not out_path.exists() or out_path.read_text(encoding="utf-8") == ""
+
+    # Cursor should be at file-end
+    cursor = load_cursor("fromnow", root=cursor_root)
+    assert cursor.offset == changes.stat().st_size
+
+
+def test_from_now_picks_up_new_events_after_first_start(tmp_path: Path) -> None:
+    """After seek-to-end, events appended POST-start are dispatched normally."""
+    channel_dir = tmp_path / "channel"
+    cursor_root = tmp_path / "cursors"
+    changes = _seed_channel(channel_dir)
+    rule = FilterRule()
+    consumer = _consumer(tmp_path, "fromnow2", rule)
+    watcher = Watcher(
+        channel_dir=channel_dir,
+        consumers=[consumer],
+        cursor_root=cursor_root,
+        seek_to_end_on_first_start=True,
+    )
+
+    # Simulate first-start seek + initial sweep (no new events → no output)
+    from agent_rally_watcher.watcher import _seed_absent_cursors_to_end, _process_once
+
+    _seed_absent_cursors_to_end(watcher)
+    _process_once(watcher)
+    assert not (tmp_path / "fromnow2.out.jsonl").exists()
+
+    # Append a NEW event
+    with open(changes, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"kind": "feedback", "tool": "codex", "run_id": "post", "payload": {}}) + "\n")
+
+    _process_once(watcher)
+    out = (tmp_path / "fromnow2.out.jsonl").read_text(encoding="utf-8").strip()
+    assert json.loads(out)["run_id"] == "post"
+
+
+def test_from_start_backfills_all_records(tmp_path: Path) -> None:
+    """seek_to_end_on_first_start=False → all 5 records dispatched (v0.1.0 behavior)."""
+    channel_dir = tmp_path / "channel"
+    cursor_root = tmp_path / "cursors"
+    _seed_channel(channel_dir)
+    rule = FilterRule()
+    consumer = _consumer(tmp_path, "fromstart", rule)
+    stop = threading.Event()
+    watcher = Watcher(
+        channel_dir=channel_dir,
+        consumers=[consumer],
+        stop_event=stop,
+        cursor_root=cursor_root,
+        seek_to_end_on_first_start=False,
+    )
+
+    def backend(_w: Watcher) -> Iterable[None]:
+        stop.set()
+        yield None
+
+    run_watcher(watcher, backend=backend)
+
+    lines = (tmp_path / "fromstart.out.jsonl").read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 5  # all fixture records dispatched
+
+
+def test_seek_to_end_does_not_clobber_existing_cursor(tmp_path: Path) -> None:
+    """A persisted cursor (restart scenario) is NEVER seeked to EOF, even when flag is True."""
+    from agent_rally_watcher.cursor import Cursor, save_cursor
+    channel_dir = tmp_path / "channel"
+    cursor_root = tmp_path / "cursors"
+    _seed_channel(channel_dir)
+    rule = FilterRule()
+    consumer = _consumer(tmp_path, "restart", rule)
+
+    # Pre-existing cursor at offset 0 (simulates a restart with v0.1.0-style state)
+    save_cursor(Cursor(consumer_id="restart", offset=0), cursor_root)
+
+    stop = threading.Event()
+    watcher = Watcher(
+        channel_dir=channel_dir,
+        consumers=[consumer],
+        stop_event=stop,
+        cursor_root=cursor_root,
+        seek_to_end_on_first_start=True,  # would seek if cursor were absent
+    )
+
+    def backend(_w: Watcher) -> Iterable[None]:
+        stop.set()
+        yield None
+
+    run_watcher(watcher, backend=backend)
+
+    # All 5 records dispatched because cursor was at 0 and was not clobbered
+    lines = (tmp_path / "restart.out.jsonl").read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 5
+
+
 def test_run_watcher_drives_via_injected_backend(tmp_path: Path) -> None:
     """``run_watcher`` invokes _process_once for each backend yield."""
     channel_dir = tmp_path / "channel"
@@ -156,6 +275,7 @@ def test_run_watcher_drives_via_injected_backend(tmp_path: Path) -> None:
         consumers=[consumer],
         stop_event=stop,
         cursor_root=cursor_root,
+        seek_to_end_on_first_start=False,  # backfill semantics under test
     )
 
     def backend(w: Watcher) -> Iterable[None]:
