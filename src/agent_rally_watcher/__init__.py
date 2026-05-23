@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
 # SPDX-License-Identifier: Apache-2.0
+# build-loop@tyroneross:canary:agent-rally-watcher
+# canary-end
 """Agent Rally Watcher — push-based daemon companion to agent-rally-point.
 
 Tails ``~/.agent-rally-point/apps/<slug>/changes.jsonl`` via watchfiles, applies
