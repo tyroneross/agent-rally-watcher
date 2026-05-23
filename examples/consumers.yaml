@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Example consumers.yaml — copy to ~/.agent-rally-watcher/consumers.yaml and edit.
+#
+# Each top-level key under `consumers:` is a consumer ID (also the cursor name).
+# Each consumer has two sections:
+#   filter:   AND-combined rules; missing fields match everything.
+#     kinds:           list of channel record kinds to include
+#     kinds_not:       list of kinds to exclude
+#     tools:           list of `tool` values to include
+#     tools_not:       list of `tool` values to exclude (e.g. don't echo self)
+#     senders:         list of `run_id` values to include
+#     payload_match:   dict of payload.<key> == value pairs (string equality)
+#   sink:     where matched records go
+#     type: file    + path: <path>             — append JSONL
+#     type: notify  + title: <str> [+ body_field: <payload-key>] — macOS osascript
+#     type: http    + url: <url>               — POST JSON (stubbed in v0.1)
+
+consumers:
+  claude_code:
+    filter:
+      kinds: [feedback, handoff, dep-change]
+      tools_not: [claude_code]
+    sink:
+      type: file
+      path: ~/.agent-rally-watcher/streams/claude_code.jsonl
+
+  codex:
+    filter:
+      kinds: [feedback, handoff]
+      tools_not: [codex]
+    sink:
+      type: file
+      path: ~/.agent-rally-watcher/streams/codex.jsonl
+
+  urgent_notify:
+    filter:
+      kinds: [feedback]
+      payload_match:
+        verdict: BLOCKED
+    sink:
+      type: notify
+      title: "Rally Watcher — blocker"

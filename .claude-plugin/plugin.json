@@ -1,0 +1,11 @@
+{
+  "name": "agent-rally-watcher",
+  "version": "0.1.0",
+  "description": "Daemon companion to agent-rally-point: push-based watcher for Rally Point streams with per-consumer filtering and dispatch.",
+  "author": {
+    "name": "Tyrone Ross, Jr"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tyroneross/agent-rally-watcher",
+  "repository": "https://github.com/tyroneross/agent-rally-watcher"
+}
