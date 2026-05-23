@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .cursor import Cursor, load_cursor, save_cursor
+from .cursor import Cursor, cursor_path, load_cursor, save_cursor
 from .dispatch import dispatch
 from .filter import Consumer, match
 
@@ -40,12 +40,20 @@ _CHANGES_FILENAME = "changes.jsonl"
 
 @dataclass
 class Watcher:
-    """Configuration bundle for one channel watch."""
+    """Configuration bundle for one channel watch.
+
+    ``seek_to_end_on_first_start`` controls first-start backfill: when True
+    (the v0.1.1 default) and a consumer's cursor file is absent, the cursor
+    is pre-seeded to the current end-of-file before the first sweep, so only
+    NEW events dispatch. When False, the cursor starts at byte 0 (full
+    backfill — v0.1.0 behavior). Existing cursors are never touched.
+    """
 
     channel_dir: Path
     consumers: list[Consumer]
     stop_event: threading.Event | None = None
     cursor_root: Path | None = None
+    seek_to_end_on_first_start: bool = True
 
     @property
     def changes_path(self) -> Path:
@@ -113,6 +121,28 @@ def _process_once(watcher: Watcher) -> dict[str, int]:
     return delivered
 
 
+def _seed_absent_cursors_to_end(watcher: Watcher) -> int:
+    """Pre-seed cursors at current EOF for consumers with no cursor file yet.
+
+    Returns the number of cursors seeded. Existing cursors are NOT touched —
+    a restart always honors the persisted offset, regardless of this flag.
+    Called once before the first sweep when ``seek_to_end_on_first_start`` is True.
+    """
+    try:
+        size = watcher.changes_path.stat().st_size
+    except (FileNotFoundError, OSError):
+        size = 0
+    seeded = 0
+    for consumer in watcher.consumers:
+        cp = cursor_path(consumer.id, watcher.cursor_root)
+        if cp.exists():
+            continue  # restart — preserve persisted offset
+        cursor = Cursor(consumer_id=consumer.id, offset=size)
+        save_cursor(cursor, watcher.cursor_root)
+        seeded += 1
+    return seeded
+
+
 def run_watcher(
     watcher: Watcher,
     *,
@@ -125,6 +155,15 @@ def run_watcher(
     """
     if watcher.stop_event is None:
         watcher.stop_event = threading.Event()
+
+    # First-start seek-to-end (v0.1.1 default). Pre-seeds only absent cursors;
+    # restarts with persisted cursors are unaffected.
+    if watcher.seek_to_end_on_first_start:
+        seeded = _seed_absent_cursors_to_end(watcher)
+        if seeded:
+            logger.info(
+                "seeded %d cursor(s) to file-end (use --from-start to backfill)", seeded
+            )
 
     # First sweep — catch any events already in the log past the last cursor.
     _process_once(watcher)

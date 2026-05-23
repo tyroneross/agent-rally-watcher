@@ -28,7 +28,7 @@ from .watcher import Watcher, run_watcher
 
 DEFAULT_RUN_ROOT = "~/.agent-rally-watcher/run"
 DEFAULT_LOG_ROOT = "~/.agent-rally-watcher/logs"
-DEFAULT_CONSUMERS_CONFIG = "~/.agent-rally-watcher/consumers.yaml"
+DEFAULT_CONSUMERS_CONFIG = "~/.agent-rally-watcher/consumers.toml"
 LOG_BYTES_PER_FILE = 1 * 1024 * 1024  # 1 MiB
 LOG_BACKUP_COUNT = 3
 
@@ -112,12 +112,18 @@ def start_daemon(
     channel_dir: Path,
     *,
     foreground: bool = False,
+    seek_to_end_on_first_start: bool = True,
 ) -> int:
     """Start the watcher. Returns 0 on success, non-zero on error.
 
     ``foreground=True`` blocks in the current process (useful for launchd
     and `agent-rally-watcher run-foreground`). ``False`` forks once and
     returns to caller.
+
+    ``seek_to_end_on_first_start`` (default True / ``--from-now``) seeks
+    absent cursors to EOF so only new events dispatch. Pass False
+    (``--from-start``) to backfill the entire channel log on first start.
+    Existing cursors are honored regardless of this flag.
     """
     status, pid = daemon_status(paths)
     if status == "running":
@@ -150,6 +156,7 @@ def start_daemon(
         channel_dir=channel_dir,
         consumers=consumers,
         stop_event=stop_event,
+        seek_to_end_on_first_start=seek_to_end_on_first_start,
     )
     logging.getLogger(__name__).info(
         "starting: channel=%s consumers=%d log=%s",

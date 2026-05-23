@@ -6,12 +6,12 @@ Rally Point is the substrate (event posting, presence, channels). Rally Watcher 
 
 ## Status
 
-**v0.1.0 — alpha** (2026-05-23). Push-based via [`watchfiles`](https://watchfiles.helpmanual.io/) (kqueue on macOS, inotify on Linux). Per-consumer cursor persistence. stdout + macOS notification dispatch. HTTP POST dispatch stubbed for v0.2.
+**v0.1.1 — alpha** (2026-05-23). Push-based via [`watchfiles`](https://watchfiles.helpmanual.io/) (kqueue on macOS, inotify on Linux). Per-consumer cursor persistence. stdout + macOS notification dispatch. HTTP POST dispatch stubbed for v0.2. **Zero non-stdlib deps beyond `watchfiles`** — config is TOML (`tomllib`).
 
 ## What it does
 
 - **Push-based tail** of `~/.agent-rally-point/apps/<slug>/changes.jsonl` (sub-second on kqueue/inotify; no polling).
-- **Per-consumer filtering**: `consumers.yaml` maps tool-id (`claude_code`, `codex`, ...) to filter rules (kinds, senders, payload-field matches).
+- **Per-consumer filtering**: `consumers.toml` maps tool-id (`claude_code`, `codex`, ...) to filter rules (kinds, senders, payload-field matches).
 - **Cursor persistence**: each consumer has a cursor at `~/.agent-rally-watcher/consumers/<tool>.cursor` so a daemon restart resumes mid-stream without dupes or gaps.
 - **Dispatch sinks (v0.1)**: append-to-file (stdout-pipe target), macOS `osascript` notify. HTTP POST stubbed.
 - **Daemon lifecycle**: `agent-rally-watcher start | stop | status | reload`. PID file + size-bounded log rotation at `~/.agent-rally-watcher/logs/daemon.log`.
@@ -35,10 +35,11 @@ uv pip install -e .
 
 ```bash
 # 1. Author a consumers config
-cp examples/consumers.yaml ~/.agent-rally-watcher/consumers.yaml
-$EDITOR ~/.agent-rally-watcher/consumers.yaml
+cp examples/consumers.toml ~/.agent-rally-watcher/consumers.toml
+$EDITOR ~/.agent-rally-watcher/consumers.toml
 
 # 2. Start the daemon (current repo's channel — derived from `git rev-parse --git-common-dir`)
+#    Default: cursor at file-end → only NEW events dispatch. Pass --from-start to backfill.
 agent-rally-watcher start
 
 # 3. Check status / tail logs
@@ -51,36 +52,65 @@ agent-rally-watcher stop
 
 The daemon discovers the current repo's Rally Point channel via the same `app_slug()` logic agent-rally-point uses — worktree-independent, same channel across all clones of the canonical repo.
 
-## consumers.yaml
+## consumers.toml
 
-```yaml
-# Each entry: filter + sink. Filter rules are AND-combined; missing fields
-# match everything. Sinks: file (append JSONL), notify (macOS osascript).
-consumers:
-  claude_code:
-    filter:
-      kinds: [feedback, handoff, dep-change]
-      tools_not: [claude_code]    # don't echo back to self
-    sink:
-      type: file
-      path: ~/.agent-rally-watcher/streams/claude_code.jsonl
+```toml
+# Each [consumers.<id>] table = one consumer (id is also the cursor name).
+# Filter rules AND-combine; missing fields match everything.
+# Sinks: file (append JSONL), notify (macOS osascript), http (POST, v0.2).
 
-  codex:
-    filter:
-      kinds: [feedback, handoff]
-    sink:
-      type: file
-      path: ~/.agent-rally-watcher/streams/codex.jsonl
+[consumers.claude_code.filter]
+kinds = ["feedback", "handoff", "dep-change"]
+tools_not = ["claude_code"]      # don't echo back to self
 
-  urgent_notify:
-    filter:
-      kinds: [feedback]
-      payload_match:
-        verdict: BLOCKED
-    sink:
-      type: notify
-      title: "Rally Watcher"
+[consumers.claude_code.sink]
+type = "file"
+path = "~/.agent-rally-watcher/streams/claude_code.jsonl"
+
+
+[consumers.codex.filter]
+kinds = ["feedback", "handoff"]
+
+[consumers.codex.sink]
+type = "file"
+path = "~/.agent-rally-watcher/streams/codex.jsonl"
+
+
+[consumers.urgent_notify.filter]
+kinds = ["feedback"]
+payload_match = { verdict = "BLOCKED" }
+
+[consumers.urgent_notify.sink]
+type = "notify"
+title = "Rally Watcher"
 ```
+
+### Migrating from v0.1.0 YAML
+
+v0.1.0 used `consumers.yaml`; v0.1.1 uses `consumers.toml` (stdlib `tomllib`, no
+PyYAML). The schema is the same — only the surface syntax changed:
+
+- Each `consumers.<id>:` block becomes a `[consumers.<id>]` table.
+- `filter:` and `sink:` become `[consumers.<id>.filter]` and `[consumers.<id>.sink]` sub-tables.
+- `[feedback, handoff]` YAML lists become `["feedback", "handoff"]` TOML arrays.
+- `payload_match:` mappings become inline tables: `payload_match = { verdict = "BLOCKED" }`.
+
+The default config path moved from `~/.agent-rally-watcher/consumers.yaml` to
+`~/.agent-rally-watcher/consumers.toml`. Rename the file and translate the syntax
+(or `cp examples/consumers.toml ~/.agent-rally-watcher/consumers.toml` and re-edit).
+
+### First-start backfill
+
+On a fresh install, the daemon defaults to seeking the current cursor to the END of
+`changes.jsonl` on first start (`--from-now`, the default). Only events written AFTER
+start are dispatched. To replay everything from byte 0, pass `--from-start`:
+
+```bash
+agent-rally-watcher start --from-start
+```
+
+Restarts after that point honor the persisted cursor regardless of which flag is
+passed — the flag only affects the FIRST start when no cursor exists yet.
 
 ## Architecture
 
