@@ -28,7 +28,7 @@ from .watcher import Watcher, run_watcher
 
 DEFAULT_RUN_ROOT = "~/.agent-rally-watcher/run"
 DEFAULT_LOG_ROOT = "~/.agent-rally-watcher/logs"
-DEFAULT_CONSUMERS_CONFIG = "~/.agent-rally-watcher/consumers.yaml"
+DEFAULT_CONSUMERS_CONFIG = "~/.agent-rally-watcher/consumers.toml"
 LOG_BYTES_PER_FILE = 1 * 1024 * 1024  # 1 MiB
 LOG_BACKUP_COUNT = 3
 

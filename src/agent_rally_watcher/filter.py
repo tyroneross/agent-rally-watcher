@@ -11,18 +11,23 @@ Filter rule fields (AND-combined; missing field = match-all):
     senders:         [str]            — record.run_id in this list
     payload_match:   {key: value}     — record.payload[key] == value (string-equal)
 
-``Consumer`` bundles a filter with a sink config. ``load_consumers`` parses YAML.
+``Consumer`` bundles a filter with a sink config. ``load_consumers`` parses TOML
+(stdlib ``tomllib``, Python ≥3.11). Schema mirrors the prior YAML layout:
+
+    [consumers.<id>.filter]
+    kinds = ["feedback", "handoff"]
+    tools_not = ["claude_code"]
+
+    [consumers.<id>.sink]
+    type = "file"
+    path = "~/.agent-rally-watcher/streams/claude_code.jsonl"
 """
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
-
-try:
-    import yaml  # PyYAML
-except ImportError as e:  # pragma: no cover — pyproject pins it
-    raise SystemExit("agent-rally-watcher requires pyyaml; install via `uv pip install pyyaml`") from e
 
 
 @dataclass
@@ -69,16 +74,16 @@ def _parse_filter(raw: dict[str, Any] | None) -> FilterRule:
 
 
 def load_consumers(config_path: Path | str) -> list[Consumer]:
-    """Parse a consumers.yaml file → list[Consumer]. Raises on shape errors."""
+    """Parse a consumers.toml file → list[Consumer]. Raises on shape errors."""
     p = Path(config_path).expanduser()
-    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    data = tomllib.loads(p.read_text(encoding="utf-8"))
     raw_consumers = data.get("consumers")
     if not isinstance(raw_consumers, dict):
-        raise ValueError(f"{p}: top-level 'consumers' must be a mapping")
+        raise ValueError(f"{p}: top-level 'consumers' must be a table")
     out: list[Consumer] = []
     for cid, entry in raw_consumers.items():
         if not isinstance(entry, dict):
-            raise ValueError(f"{p}: consumer {cid!r} must be a mapping")
+            raise ValueError(f"{p}: consumer {cid!r} must be a table")
         sink = entry.get("sink")
         if not isinstance(sink, dict) or "type" not in sink:
             raise ValueError(f"{p}: consumer {cid!r} missing sink.type")

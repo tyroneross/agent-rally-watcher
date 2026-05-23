@@ -72,23 +72,23 @@ def test_and_combined_rules() -> None:
 
 
 def test_load_consumers_parses_example(tmp_path: Path) -> None:
-    cfg = tmp_path / "consumers.yaml"
+    cfg = tmp_path / "consumers.toml"
     cfg.write_text(
         """
-consumers:
-  claude_code:
-    filter:
-      kinds: [feedback, handoff]
-      tools_not: [claude_code]
-    sink:
-      type: file
-      path: /tmp/out.jsonl
-  codex:
-    filter:
-      kinds: [feedback]
-    sink:
-      type: notify
-      title: hi
+[consumers.claude_code.filter]
+kinds = ["feedback", "handoff"]
+tools_not = ["claude_code"]
+
+[consumers.claude_code.sink]
+type = "file"
+path = "/tmp/out.jsonl"
+
+[consumers.codex.filter]
+kinds = ["feedback"]
+
+[consumers.codex.sink]
+type = "notify"
+title = "hi"
 """.strip(),
         encoding="utf-8",
     )
@@ -101,10 +101,30 @@ consumers:
 
 
 def test_load_consumers_rejects_missing_sink(tmp_path: Path) -> None:
-    cfg = tmp_path / "consumers.yaml"
+    cfg = tmp_path / "consumers.toml"
     cfg.write_text(
-        "consumers:\n  x:\n    filter:\n      kinds: [feedback]\n",
+        '[consumers.x.filter]\nkinds = ["feedback"]\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError):
         load_consumers(cfg)
+
+
+def test_load_consumers_parses_inline_payload_match(tmp_path: Path) -> None:
+    """TOML inline-table for payload_match (the v0.1.0 YAML used a nested dict)."""
+    cfg = tmp_path / "consumers.toml"
+    cfg.write_text(
+        """
+[consumers.urgent.filter]
+kinds = ["feedback"]
+payload_match = { verdict = "BLOCKED" }
+
+[consumers.urgent.sink]
+type = "notify"
+title = "blocker"
+""".strip(),
+        encoding="utf-8",
+    )
+    consumers = load_consumers(cfg)
+    assert len(consumers) == 1
+    assert consumers[0].filter.payload_match == {"verdict": "BLOCKED"}

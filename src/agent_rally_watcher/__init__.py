@@ -8,7 +8,7 @@ macOS notify, HTTP stubbed). Restart-safe via per-consumer cursors.
 """
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .cursor import Cursor, load_cursor, save_cursor
 from .filter import FilterRule, load_consumers, match
